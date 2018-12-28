@@ -14,6 +14,8 @@
 (defparameter *font* (make-hash-table))
 (defparameter *map* nil)
 (defparameter *creatures* nil)
+(defparameter *redraw* t)
+(defparameter *messages* nil)
 
 ; Structures
 
@@ -32,12 +34,9 @@
      :initform nil)))
 
 (defclass creature ()
-  ((x
-     :initarg :x
-     :initform 0)
-   (y
-     :initarg :y
-     :initform 0)))
+  ((x :initarg :x :initform 0)
+   (y :initarg :y :initform 0)
+   (hp :initarg :hp :initform 0)))
 
 ; Initialization
 
@@ -66,10 +65,14 @@
           (* - - - - - - - - - - - *)
           (* * * * * * * * * * * * *))))
 
+(defun init-vars ()
+  (setf *redraw* t)
+  (setf *messages* nil))
+
 (defun init-creatures ()
   (setf *creatures*
-        (list ':player (make-instance 'creature :x 3 :y 4)
-              ':monster (make-instance 'creature :x 5 :y 5))))
+        (list ':player (make-instance 'creature :x 3 :y 4 :hp 100)
+              ':monster (make-instance 'creature :x 5 :y 5 :hp 10))))
 
 ; SDL2
 
@@ -133,14 +136,21 @@
 (defun move-creature-p (creature d-x d-y)
   (with-slots (x y) creature
     (if (eq '* (get-map-tile (+ x d-x) (+ y d-y)))
-        nil
+        (progn
+          (push-message (format nil "Can't go ~a ~a" d-x d-y))
+          nil)
         t)))
 
 (defun move-creature (creature d-x d-y)
-  (if (move-creature-p creature d-x d-y)
-      (with-slots (x y) creature
-        (incf x d-x)
-        (incf y d-y))))
+  (when (move-creature-p creature d-x d-y)
+    (with-slots (x y hp) creature
+      (incf x d-x)
+      (incf y d-y)
+      (decf hp))))
+
+(defun push-message (message)
+  (setf *messages*
+        (cons message *messages*)))
 
 ; Rendering
 
@@ -168,18 +178,41 @@
             (* (slot-value monster 'x) 16) (* (slot-value monster 'y) 16)
             :clip monster-rect) ))
 
-(defun render-text (font-texture text)
+(defun render-text (font-texture text x y)
   (loop for char across text
         for pos from 0
         do (render font-texture
-                   (* pos 8) 0
+                   (+ x (* pos 8)) y
                    :clip (gethash char *font*))))
+
+(defun render-player-info (font-texture player)
+  (with-slots (x y hp) player
+    (render-text font-texture
+                 (concatenate 'string "Player x "
+                              (princ-to-string x))
+                 0 5)
+    (render-text font-texture
+                 (concatenate 'string "Player y "
+                              (princ-to-string y))
+                 0 14)
+    (render-text font-texture
+                 (concatenate 'string "Player hp "
+                              (princ-to-string hp))
+                 0 23)))
+
+(defun render-last-messages (font-texture)
+  (loop for message in *messages*
+        for i from 0 to 13
+        do (render-text font-texture
+                        message
+                        5 (* i 9))))
 
 ; Main game loop
 
 (defun main ()
   (init-font)
   (init-map)
+  (init-vars)
   (init-creatures)
   (with-window-renderer
     (window renderer)
@@ -196,6 +229,7 @@
       (sdl2:with-event-loop (:method :poll)
         (:quit () t)
         (:keydown (:keysym keysym)
+         (setf *redraw* t)
          (case (sdl2:scancode keysym)
            (:scancode-h (move-creature player -1 0))
            (:scancode-j (move-creature player 0 1))
@@ -203,16 +237,16 @@
            (:scancode-l (move-creature player 1 0))
            (:scancode-q (sdl2:push-quit-event))))
         (:idle ()
-         (sdl2:render-clear renderer)
-         (with-viewport (renderer 0 0 450 350) ; Game area
-           (render-map spritesheet-texture)
-           (render-creatures spritesheet-texture))
-         (with-viewport (renderer 450 0 190 480) ; Minimap, menus
-           (render-map spritesheet-texture)
-           (render-creatures spritesheet-texture))
-         (with-viewport (renderer 0 350 640 130) ; Messages
-           (render-text font-texture
-                        "The quick brown fox jumped over the lazy dog"))
-         (sdl2:render-present renderer)
+         (when *redraw*
+           (sdl2:render-clear renderer)
+           (with-viewport (renderer 0 0 450 350) ; Game area
+             (render-map spritesheet-texture)
+             (render-creatures spritesheet-texture))
+           (with-viewport (renderer 450 0 190 480) ; Minimap, menus
+             (render-player-info font-texture player))
+           (with-viewport (renderer 0 350 640 130) ; Messages
+             (render-last-messages font-texture))
+           (sdl2:render-present renderer)
+           (setf *redraw* nil))
          (sdl2:delay 100))))))
 (main)
