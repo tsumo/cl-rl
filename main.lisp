@@ -11,15 +11,30 @@
 
 (defparameter *screen-width* 640)
 (defparameter *screen-height* 480)
-(defparameter *main-viewport* '(0 0 450 350))
-(defparameter *menu-viewport* '(450 0 190 480))
-(defparameter *message-viewport* '(0 350 640 130))
-(defparameter *font* (make-hash-table))
+(defparameter *tile-size* 16)
+(defparameter *screen-width-in-tiles* 28)
+(defparameter *screen-height-in-tiles* 22)
+(defparameter *main-viewport*
+  (list 0
+        0
+        (* *tile-size* *screen-width-in-tiles*)
+        (* *tile-size* *screen-height-in-tiles*)))
+(defparameter *menu-viewport*
+  (list (* *tile-size* *screen-width-in-tiles*)
+        0
+        (- *screen-width* (* *tile-size* *screen-width-in-tiles*))
+        *screen-height*))
+(defparameter *message-viewport*
+  (list 0
+        (* *tile-size* *screen-height-in-tiles*)
+        *screen-width*
+        (- *screen-height* (* *tile-size* *screen-height-in-tiles*))))
 (defparameter *map* nil)
 (defparameter *map-width* 0)
 (defparameter *map-height* 0)
 (defparameter *map-screen-width* 0)
 (defparameter *map-screen-height* 0)
+(defparameter *font* (make-hash-table))
 (defparameter *creatures* nil)
 (defparameter *redraw* t)
 (defparameter *messages* nil)
@@ -62,7 +77,9 @@
         (with-open-file (s "map.txt")
           (do ((l (read-line s) (read-line s nil 'eof))
                (lst nil (append lst (list l))))
-              ((eq l 'eof) lst)))))
+              ((eq l 'eof) lst))))
+  (setf *map-width* (apply #'max (mapcar #'length *map*)))
+  (setf *map-height* (length *map*)))
 
 (defun init-vars ()
   (setf *redraw* t)
@@ -70,7 +87,7 @@
 
 (defun init-creatures ()
   (setf *creatures*
-        (list ':player (make-instance 'creature :x 3 :y 4 :hp 100)
+        (list ':player (make-instance 'creature :x 20 :y 10 :hp 100)
               ':monster (make-instance 'creature :x 5 :y 5 :hp 10))))
 
 ; SDL2
@@ -175,7 +192,7 @@
             :clip player-rect)
     (render spritesheet-texture
             (* (slot-value monster 'x) 16) (* (slot-value monster 'y) 16)
-            :clip monster-rect) ))
+            :clip monster-rect)))
 
 (defun render-text (font-texture text x y)
   (loop for char across text
@@ -189,22 +206,22 @@
     (render-text font-texture
                  (concatenate 'string "Player x "
                               (princ-to-string x))
-                 0 5)
+                 5 5)
     (render-text font-texture
                  (concatenate 'string "Player y "
                               (princ-to-string y))
-                 0 14)
+                 5 14)
     (render-text font-texture
                  (concatenate 'string "Player hp "
                               (princ-to-string hp))
-                 0 23)))
+                 5 23)))
 
 (defun render-last-messages (font-texture)
   (loop for message in *messages*
         for i from 0 to 13
         do (render-text font-texture
                         message
-                        5 (* i 9))))
+                        5 (+ (* i 9) 2))))
 
 ; Main game loop
 
@@ -238,12 +255,12 @@
         (:idle ()
          (when *redraw*
            (sdl2:render-clear renderer)
-           (with-viewport (renderer *main-viewport*) ; Game area
+           (with-viewport (renderer *main-viewport*)
              (render-map spritesheet-texture)
              (render-creatures spritesheet-texture))
-           (with-viewport (renderer *menu-viewport*) ; Minimap, menus
+           (with-viewport (renderer *menu-viewport*)
              (render-player-info font-texture player))
-           (with-viewport (renderer *message-viewport*) ; Messages
+           (with-viewport (renderer *message-viewport*)
              (render-last-messages font-texture))
            (sdl2:render-present renderer)
            (setf *redraw* nil))
