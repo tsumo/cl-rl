@@ -11,8 +11,15 @@
 
 (defparameter *screen-width* 640)
 (defparameter *screen-height* 480)
+(defparameter *main-viewport* '(0 0 450 350))
+(defparameter *menu-viewport* '(450 0 190 480))
+(defparameter *message-viewport* '(0 350 640 130))
 (defparameter *font* (make-hash-table))
 (defparameter *map* nil)
+(defparameter *map-width* 0)
+(defparameter *map-height* 0)
+(defparameter *map-screen-width* 0)
+(defparameter *map-screen-height* 0)
 (defparameter *creatures* nil)
 (defparameter *redraw* t)
 (defparameter *messages* nil)
@@ -52,18 +59,10 @@
 
 (defun init-map ()
   (setf *map*
-        '((* * * * * * * * * * * * *)
-          (* - - - - * - - - - - - *)
-          (* - - - - * - - - - - - *)
-          (* * - * * * - - - - - - *)
-          (* - - - - - - - - - - - *)
-          (* - - - - - - - - - - - *)
-          (* - - - - - * * - * * - *)
-          (* - - - - - * - - - * - *)
-          (* - - - - - * - - - * - *)
-          (* - - - - - * * * * * - *)
-          (* - - - - - - - - - - - *)
-          (* * * * * * * * * * * * *))))
+        (with-open-file (s "map.txt")
+          (do ((l (read-line s) (read-line s nil 'eof))
+               (lst nil (append lst (list l))))
+              ((eq l 'eof) lst)))))
 
 (defun init-vars ()
   (setf *redraw* t)
@@ -118,11 +117,11 @@
                         surface))))
     texture))
 
-(defmacro with-viewport ((renderer x y w h) &body body)
-  `(progn
+(defmacro with-viewport ((renderer viewport) &body body)
+  `(destructuring-bind (x y w h) ,viewport
      (sdl2:render-set-viewport
        ,renderer
-       (sdl2:make-rect ,x ,y ,w ,h))
+       (sdl2:make-rect x y w h))
      ,@body
      (sdl2:render-set-viewport
        ,renderer
@@ -130,12 +129,16 @@
 
 ; Game logic
 
+(defun push-message (message)
+  (setf *messages*
+        (cons message *messages*)))
+
 (defun get-map-tile (x y)
-  (nth x (nth y *map*)))
+  (char (nth y *map*) x))
 
 (defun move-creature-p (creature d-x d-y)
   (with-slots (x y) creature
-    (if (eq '* (get-map-tile (+ x d-x) (+ y d-y)))
+    (if (eql #\# (get-map-tile (+ x d-x) (+ y d-y)))
         (progn
           (push-message (format nil "Can't go ~a ~a" d-x d-y))
           nil)
@@ -148,22 +151,18 @@
       (incf y d-y)
       (decf hp))))
 
-(defun push-message (message)
-  (setf *messages*
-        (cons message *messages*)))
-
 ; Rendering
 
 (defun render-map (spritesheet-texture)
   (let ((floor-rect (sdl2:make-rect 0 0 16 16))
         (wall-rect (sdl2:make-rect 17 0 16 16)))
     (loop for row in *map* and i from 0
-        do (loop for tile in row and j from 0
+        do (loop for tile across row and j from 0
                  do (render spritesheet-texture
                             (* j 16) (* i 16)
-                            :clip (cond ((eq tile '*)
+                            :clip (cond ((eql tile #\#)
                                          wall-rect)
-                                        ((eq tile '-)
+                                        ((eql tile #\.)
                                          floor-rect)))))))
 
 (defun render-creatures (spritesheet-texture)
@@ -229,7 +228,7 @@
       (sdl2:with-event-loop (:method :poll)
         (:quit () t)
         (:keydown (:keysym keysym)
-         (setf *redraw* t)
+         (setf *redraw* t) ; Redraw on keypress
          (case (sdl2:scancode keysym)
            (:scancode-h (move-creature player -1 0))
            (:scancode-j (move-creature player 0 1))
@@ -239,14 +238,14 @@
         (:idle ()
          (when *redraw*
            (sdl2:render-clear renderer)
-           (with-viewport (renderer 0 0 450 350) ; Game area
+           (with-viewport (renderer *main-viewport*) ; Game area
              (render-map spritesheet-texture)
              (render-creatures spritesheet-texture))
-           (with-viewport (renderer 450 0 190 480) ; Minimap, menus
+           (with-viewport (renderer *menu-viewport*) ; Minimap, menus
              (render-player-info font-texture player))
-           (with-viewport (renderer 0 350 640 130) ; Messages
+           (with-viewport (renderer *message-viewport*) ; Messages
              (render-last-messages font-texture))
            (sdl2:render-present renderer)
            (setf *redraw* nil))
-         (sdl2:delay 100))))))
+         (sdl2:delay 50))))))
 (main)
