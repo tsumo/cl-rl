@@ -12,28 +12,30 @@
 (defparameter *screen-width* 640)
 (defparameter *screen-height* 480)
 (defparameter *tile-size* 16)
-(defparameter *screen-width-in-tiles* 28)
-(defparameter *screen-height-in-tiles* 22)
+(defparameter *main-viewport-width-in-tiles* 28)
+(defparameter *main-viewport-height-in-tiles* 22)
+(defparameter *main-viewport-width*
+  (* *tile-size* *main-viewport-width-in-tiles*))
+(defparameter *main-viewport-height*
+  (* *tile-size* *main-viewport-height-in-tiles*))
 (defparameter *main-viewport*
   (list 0
         0
-        (* *tile-size* *screen-width-in-tiles*)
-        (* *tile-size* *screen-height-in-tiles*)))
+        *main-viewport-width*
+        *main-viewport-height*))
 (defparameter *menu-viewport*
-  (list (* *tile-size* *screen-width-in-tiles*)
+  (list *main-viewport-width*
         0
-        (- *screen-width* (* *tile-size* *screen-width-in-tiles*))
+        (- *screen-width* *main-viewport-width*)
         *screen-height*))
 (defparameter *message-viewport*
   (list 0
-        (* *tile-size* *screen-height-in-tiles*)
+        *main-viewport-height*
         *screen-width*
-        (- *screen-height* (* *tile-size* *screen-height-in-tiles*))))
+        (- *screen-height* *main-viewport-height*)))
 (defparameter *map* nil)
 (defparameter *map-width* 0)
 (defparameter *map-height* 0)
-(defparameter *map-screen-width* 0)
-(defparameter *map-screen-height* 0)
 (defparameter *font* (make-hash-table))
 (defparameter *creatures* nil)
 (defparameter *redraw* t)
@@ -73,13 +75,17 @@
                    7 8))))
 
 (defun init-map ()
-  (setf *map*
-        (with-open-file (s "map.txt")
-          (do ((l (read-line s) (read-line s nil 'eof))
-               (lst nil (append lst (list l))))
-              ((eq l 'eof) lst))))
-  (setf *map-width* (apply #'max (mapcar #'length *map*)))
-  (setf *map-height* (length *map*)))
+  (setf *map* (make-hash-table :test #'equal))
+  (with-open-file (file "map.txt")
+    (loop for line = (read-line file nil)
+          and y from 0
+          while line
+          do (loop for char across line
+                   and x from 0
+                   do (setf (gethash (list x y) *map*)
+                            char)
+                   finally (setf *map-width* x))
+          finally (setf *map-height* y))))
 
 (defun init-vars ()
   (setf *redraw* t)
@@ -87,7 +93,7 @@
 
 (defun init-creatures ()
   (setf *creatures*
-        (list ':player (make-instance 'creature :x 20 :y 10 :hp 100)
+        (list ':player (make-instance 'creature :x 3 :y 3 :hp 100)
               ':monster (make-instance 'creature :x 5 :y 5 :hp 10))))
 
 ; SDL2
@@ -151,7 +157,7 @@
         (cons message *messages*)))
 
 (defun get-map-tile (x y)
-  (char (nth y *map*) x))
+  (gethash (list x y) *map*))
 
 (defun move-creature-p (creature d-x d-y)
   (with-slots (x y) creature
@@ -171,28 +177,44 @@
 ; Rendering
 
 (defun render-map (spritesheet-texture)
-  (let ((floor-rect (sdl2:make-rect 0 0 16 16))
-        (wall-rect (sdl2:make-rect 17 0 16 16)))
-    (loop for row in *map* and i from 0
-        do (loop for tile across row and j from 0
-                 do (render spritesheet-texture
-                            (* j 16) (* i 16)
-                            :clip (cond ((eql tile #\#)
-                                         wall-rect)
-                                        ((eql tile #\.)
-                                         floor-rect)))))))
+  (let ((player (getf *creatures* :player)))
+    (with-slots (x y) player
+      (let ((start-x (- x (/ *main-viewport-width-in-tiles* 2)))
+            (start-y (- y (/ *main-viewport-height-in-tiles* 2)))
+            (floor-rect (sdl2:make-rect 0 0 *tile-size* *tile-size*))
+            (wall-rect (sdl2:make-rect 17 0 *tile-size* *tile-size*)))
+        (loop for world-y from start-y to (1- *map-height*)
+              and screen-y from 0 to *main-viewport-height-in-tiles*
+              do (loop for world-x from start-x to *map-width*
+                       and screen-x from 0 to *main-viewport-width-in-tiles*
+                       do (when (and (>= world-x 0)
+                                     (>= world-y 0))
+                            (let ((tile (get-map-tile world-x world-y)))
+                              (render spritesheet-texture
+                                      (* screen-x *tile-size*) (* screen-y *tile-size*)
+                                      :clip (cond ((eql tile #\#)
+                                                   wall-rect)
+                                                  ((eql tile #\.)
+                                                   floor-rect)))))))))))
 
 (defun render-creatures (spritesheet-texture)
-  (let ((player-rect (sdl2:make-rect 34 0 16 16))
-        (monster-rect (sdl2:make-rect 0 17 16 16))
+  (let ((player-rect (sdl2:make-rect 34 0 *tile-size* *tile-size*))
+        (monster-rect (sdl2:make-rect 0 17 *tile-size* *tile-size*))
         (player (getf *creatures* :player))
         (monster (getf *creatures* :monster)))
     (render spritesheet-texture
-            (* (slot-value player 'x) 16) (* (slot-value player 'y) 16)
+            (* (/ *main-viewport-width-in-tiles* 2) *tile-size*)
+            (* (/ *main-viewport-height-in-tiles* 2) *tile-size*)
             :clip player-rect)
-    (render spritesheet-texture
-            (* (slot-value monster 'x) 16) (* (slot-value monster 'y) 16)
-            :clip monster-rect)))
+    (with-slots (x y) monster
+      (render spritesheet-texture
+              (* (+ (/ *main-viewport-width-in-tiles* 2)
+                    (- x (slot-value player 'x)))
+                 *tile-size*)
+              (* (+ (/ *main-viewport-height-in-tiles* 2)
+                    (- y (slot-value player 'y)))
+                 *tile-size*)
+              :clip monster-rect))))
 
 (defun render-text (font-texture text x y)
   (loop for char across text
