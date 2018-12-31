@@ -7,7 +7,7 @@
 (require :sdl2)
 (require :sdl2-image)
 
-; Globals
+; === Globals ===
 
 (defparameter *screen-width* 640)
 (defparameter *screen-height* 480)
@@ -41,7 +41,7 @@
 (defparameter *redraw* t)
 (defparameter *messages* nil)
 
-; Structures
+; === Structures ===
 
 (defclass texture ()
   ((renderer
@@ -57,12 +57,23 @@
      :accessor tex-texture
      :initform nil)))
 
+(defclass tile ()
+  ((description
+     :initarg :description
+     :initform "Map tile")
+   (passable
+     :initarg :passable
+     :initform t)
+   (rect
+     :initarg :rect
+     :initform nil)))
+
 (defclass creature ()
   ((x :initarg :x :initform 0)
    (y :initarg :y :initform 0)
    (hp :initarg :hp :initform 0)))
 
-; Initialization
+; === Initialization ===
 
 (defun init-font ()
   (loop for ascii-code from 32 to 126
@@ -77,15 +88,26 @@
 (defun init-map ()
   (setf *map* (make-hash-table :test #'equal))
   (with-open-file (file "map.txt")
-    (loop for line = (read-line file nil)
-          and y from 0
-          while line
-          do (loop for char across line
-                   and x from 0
-                   do (setf (gethash (list x y) *map*)
-                            char)
-                   finally (setf *map-width* x))
-          finally (setf *map-height* y))))
+    (let ((floor-rect (sdl2:make-rect 0 0 *tile-size* *tile-size*))
+          (wall-rect (sdl2:make-rect 17 0 *tile-size* *tile-size*)))
+      (loop for line = (read-line file nil)
+            and y from 0
+            while line
+            do (loop for char across line
+                     and x from 0
+                     do (setf (gethash (list x y) *map*)
+                              (cond ((eql char #\#)
+                                     (make-instance 'tile
+                                                    :description "Wall"
+                                                    :passable nil
+                                                    :rect wall-rect))
+                                    ((eql char #\.)
+                                     (make-instance 'tile
+                                                    :description "Floor"
+                                                    :passable t
+                                                    :rect floor-rect))))
+                     finally (setf *map-width* x))
+            finally (setf *map-height* y)))))
 
 (defun init-vars ()
   (setf *redraw* t)
@@ -96,7 +118,7 @@
         (list ':player (make-instance 'creature :x 3 :y 3 :hp 100)
               ':monster (make-instance 'creature :x 5 :y 5 :hp 10))))
 
-; SDL2
+; === SDL2 ===
 
 (defmacro with-window-renderer ((window renderer) &body body)
   "Uses argument destructuring."
@@ -150,7 +172,7 @@
        ,renderer
        (sdl2:make-rect 0 0 *screen-width* *screen-height*))))
 
-; Game logic
+; === Game logic ===
 
 (defun push-message (message)
   (setf *messages*
@@ -161,11 +183,11 @@
 
 (defun move-creature-p (creature d-x d-y)
   (with-slots (x y) creature
-    (if (eql #\# (get-map-tile (+ x d-x) (+ y d-y)))
+    (if (slot-value (get-map-tile (+ x d-x) (+ y d-y)) 'passable)
+        t
         (progn
           (push-message (format nil "Can't go ~a ~a" d-x d-y))
-          nil)
-        t)))
+          nil))))
 
 (defun move-creature (creature d-x d-y)
   (when (move-creature-p creature d-x d-y)
@@ -174,15 +196,13 @@
       (incf y d-y)
       (decf hp))))
 
-; Rendering
+; === Rendering ===
 
 (defun render-map (spritesheet-texture)
   (let ((player (getf *creatures* :player)))
     (with-slots (x y) player
       (let ((start-x (- x (/ *main-viewport-width-in-tiles* 2)))
-            (start-y (- y (/ *main-viewport-height-in-tiles* 2)))
-            (floor-rect (sdl2:make-rect 0 0 *tile-size* *tile-size*))
-            (wall-rect (sdl2:make-rect 17 0 *tile-size* *tile-size*)))
+            (start-y (- y (/ *main-viewport-height-in-tiles* 2))))
         (loop for world-y from start-y to (1- *map-height*)
               and screen-y from 0 to *main-viewport-height-in-tiles*
               do (loop for world-x from start-x to *map-width*
@@ -191,11 +211,9 @@
                                      (>= world-y 0))
                             (let ((tile (get-map-tile world-x world-y)))
                               (render spritesheet-texture
-                                      (* screen-x *tile-size*) (* screen-y *tile-size*)
-                                      :clip (cond ((eql tile #\#)
-                                                   wall-rect)
-                                                  ((eql tile #\.)
-                                                   floor-rect)))))))))))
+                                      (* screen-x *tile-size*)
+                                      (* screen-y *tile-size*)
+                                      :clip (slot-value tile 'rect))))))))))
 
 (defun render-creatures (spritesheet-texture)
   (let ((player-rect (sdl2:make-rect 34 0 *tile-size* *tile-size*))
@@ -245,7 +263,7 @@
                         message
                         5 (+ (* i 9) 2))))
 
-; Main game loop
+; === Main game loop ===
 
 (defun main ()
   (init-font)
