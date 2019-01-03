@@ -41,6 +41,7 @@
 (defparameter *camera* nil)
 (defparameter *redraw* t)
 (defparameter *messages* nil)
+(defparameter *mode* :normal)
 
 ; === Structures ===
 
@@ -115,7 +116,8 @@
 (defun init-vars ()
   (setf *redraw* t)
   (setf *messages* nil)
-  (setf *camera* (make-instance 'entity :x 3 :y 3)))
+  (setf *camera* (make-instance 'entity :x 3 :y 3))
+  (setf *mode* :normal))
 
 (defun init-creatures ()
   (setf *creatures* (make-hash-table))
@@ -184,9 +186,42 @@
 
 ; === Game logic ===
 
+(defun set-game-mode (mode)
+  (setf *mode* mode)
+  (case mode
+    (:normal
+      (camera-on-player))
+    (:examine)))
+
+(defun handle-keypresses (key)
+  (case *mode*
+    (:normal
+      (let ((player (gethash :player *creatures*)))
+        (case key
+          (:scancode-q (sdl2:push-quit-event))
+          (:scancode-h (move-creature player -1 0))
+          (:scancode-j (move-creature player 0 1))
+          (:scancode-k (move-creature player 0 -1))
+          (:scancode-l (move-creature player 1 0))
+          (:scancode-x (set-game-mode :examine)))
+        (camera-on-player)))
+    (:examine
+      (case key
+        (:scancode-q (sdl2:push-quit-event))
+        (:scancode-escape (set-game-mode :normal))
+        (:scancode-h (move-creature *camera* -1 0))
+        (:scancode-j (move-creature *camera* 0 1))
+        (:scancode-k (move-creature *camera* 0 -1))
+        (:scancode-l (move-creature *camera* 1 0))))))
+
 (defun push-message (message)
   (setf *messages*
         (cons message *messages*)))
+
+(defun camera-on-player ()
+  (with-slots (x y) (gethash :player *creatures*)
+    (setf (slot-value *camera* 'x) x)
+    (setf (slot-value *camera* 'y) y)))
 
 (defun get-map-tile (x y)
   (gethash (list x y) *map*))
@@ -201,31 +236,27 @@
 
 (defun move-creature (creature d-x d-y)
   (when (move-creature-p creature d-x d-y)
-    (with-slots (x y hp) creature
+    (with-slots (x y) creature
       (incf x d-x)
-      (incf y d-y)
-      (decf hp)
-      (setf (slot-value *camera* 'x) x)
-      (setf (slot-value *camera* 'y) y))))
+      (incf y d-y))))
 
 ; === Rendering ===
 
 (defun render-map (spritesheet-texture)
-  (let ((player (gethash :player *creatures*)))
-    (with-slots (x y) player
-      (let ((start-x (- x (/ *main-viewport-width-in-tiles* 2)))
-            (start-y (- y (/ *main-viewport-height-in-tiles* 2))))
-        (loop for world-y from start-y to (1- *map-height*)
-              and screen-y from 0 to *main-viewport-height-in-tiles*
-              do (loop for world-x from start-x to *map-width*
-                       and screen-x from 0 to *main-viewport-width-in-tiles*
-                       do (when (and (>= world-x 0)
-                                     (>= world-y 0))
-                            (let ((tile (get-map-tile world-x world-y)))
-                              (render spritesheet-texture
-                                      (* screen-x *tile-size*)
-                                      (* screen-y *tile-size*)
-                                      :clip (slot-value tile 'rect))))))))))
+  (with-slots (x y) *camera*
+    (let ((start-x (- x (/ *main-viewport-width-in-tiles* 2)))
+          (start-y (- y (/ *main-viewport-height-in-tiles* 2))))
+      (loop for world-y from start-y to (1- *map-height*)
+            and screen-y from 0 to *main-viewport-height-in-tiles*
+            do (loop for world-x from start-x to *map-width*
+                     and screen-x from 0 to *main-viewport-width-in-tiles*
+                     do (when (and (>= world-x 0)
+                                   (>= world-y 0))
+                          (let ((tile (get-map-tile world-x world-y)))
+                            (render spritesheet-texture
+                                    (* screen-x *tile-size*)
+                                    (* screen-y *tile-size*)
+                                    :clip (slot-value tile 'rect)))))))))
 
 (defun render-creatures (spritesheet-texture)
   (maphash (lambda (k creature)
@@ -241,6 +272,13 @@
                        :clip rect)))
            *creatures*))
 
+(defun render-cursor (spritesheet-texture)
+  (let ((cursor-rect (sdl2:make-rect 51 0 *tile-size* *tile-size*)))
+    (render spritesheet-texture
+            (/ *main-viewport-width* 2)
+            (/ *main-viewport-height* 2)
+            :clip cursor-rect)))
+
 (defun render-text (font-texture text x y)
   (loop for char across text
         for pos from 0
@@ -248,29 +286,25 @@
                    (+ x (* pos 8)) y
                    :clip (gethash char *font*))))
 
-(defun render-player-info (font-texture player)
-  (with-slots (x y hp) player
+(defun render-info (font-texture)
+  (render-text font-texture (princ-to-string *mode*) 5 5)
+  (with-slots (x y hp) (gethash :player *creatures*)
     (render-text font-texture
-                 (concatenate 'string "Player hp "
-                              (princ-to-string hp))
-                 5 5)
-    (render-text font-texture
-                 (concatenate 'string "Player x "
-                              (princ-to-string x))
+                 (format nil "Player hp ~a" hp)
                  5 14)
     (render-text font-texture
-                 (concatenate 'string "Player y "
-                              (princ-to-string y))
-                 5 23))
+                 (format nil "Player x ~a" x)
+                 5 23)
+    (render-text font-texture
+                 (format nil "Player y ~a" y)
+                 5 32))
   (with-slots (x y) *camera*
     (render-text font-texture
-                 (concatenate 'string "Camera x "
-                              (princ-to-string x))
-                 5 32)
+                 (format nil "Camera x ~a" x)
+                 5 41)
     (render-text font-texture
-                 (concatenate 'string "Camera y "
-                              (princ-to-string y))
-                 5 41)))
+                 (format nil "Camera y ~a" y)
+                 5 50)))
 
 (defun render-last-messages (font-texture)
   (loop for message in *messages*
@@ -296,26 +330,22 @@
                               "spritesheet.png"))
            (font-texture (load-texture-from-file
                            renderer
-                           "font.png"))
-           (player (gethash :player *creatures*)))
+                           "font.png")))
       (sdl2:with-event-loop (:method :poll)
         (:quit () t)
         (:keydown (:keysym keysym)
          (setf *redraw* t) ; Redraw on keypress
-         (case (sdl2:scancode keysym)
-           (:scancode-h (move-creature player -1 0))
-           (:scancode-j (move-creature player 0 1))
-           (:scancode-k (move-creature player 0 -1))
-           (:scancode-l (move-creature player 1 0))
-           (:scancode-q (sdl2:push-quit-event))))
+         (handle-keypresses (sdl2:scancode keysym)))
         (:idle ()
          (when *redraw*
            (sdl2:render-clear renderer)
            (with-viewport (renderer *main-viewport*)
              (render-map spritesheet-texture)
-             (render-creatures spritesheet-texture))
+             (render-creatures spritesheet-texture)
+             (when (eq *mode* :examine)
+               (render-cursor spritesheet-texture)))
            (with-viewport (renderer *menu-viewport*)
-             (render-player-info font-texture player))
+             (render-info font-texture))
            (with-viewport (renderer *message-viewport*)
              (render-last-messages font-texture))
            (sdl2:render-present renderer)
