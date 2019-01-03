@@ -96,13 +96,12 @@
             do (loop for char across line
                      and x from 0
                      do (setf (gethash (list x y) *map*)
-                              (cond ((eql char #\#)
-                                     (make-instance 'tile
+                              (case char
+                                (#\# (make-instance 'tile
                                                     :description "Wall"
                                                     :passable nil
                                                     :rect wall-rect))
-                                    ((eql char #\.)
-                                     (make-instance 'tile
+                                (#\. (make-instance 'tile
                                                     :description "Floor"
                                                     :passable t
                                                     :rect floor-rect))))
