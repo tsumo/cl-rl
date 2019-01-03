@@ -41,6 +41,7 @@
 (defparameter *camera* nil)
 (defparameter *redraw* t)
 (defparameter *messages* nil)
+(defparameter *examine-messages* nil)
 (defparameter *mode* :normal)
 
 ; === Structures ===
@@ -49,26 +50,16 @@
   ((renderer
      :initarg :renderer
      :initform (error "Must supply a renderer"))
-   (width
-     :accessor tex-width
-     :initform 0)
-   (height
-     :accessor tex-height
-     :initform 0)
-   (texture
-     :accessor tex-texture
-     :initform nil)))
+   (width :accessor tex-width :initform 0)
+   (height :accessor tex-height :initform 0)
+   (texture :accessor tex-texture :initform nil)))
 
 (defclass tile ()
   ((description
      :initarg :description
      :initform "Map tile")
-   (passable
-     :initarg :passable
-     :initform t)
-   (rect
-     :initarg :rect
-     :initform nil)))
+   (passable :initarg :passable :initform t)
+   (rect :initarg :rect :initform nil)))
 
 (defclass entity ()
   ((x :initarg :x :initform 0)
@@ -76,7 +67,10 @@
 
 (defclass creature (entity)
   ((hp :initarg :hp :initform 0)
-   (rect :initarg :rect :initform nil)))
+   (rect :initarg :rect :initform nil)
+   (description
+     :initarg :description
+     :initform "No description")))
 
 ; === Initialization ===
 
@@ -124,11 +118,13 @@
   (setf (gethash :player *creatures*)
         (make-instance 'creature
                        :x 3 :y 3 :hp 100
-                       :rect (sdl2:make-rect 34 0 *tile-size* *tile-size*)))
+                       :rect (sdl2:make-rect 34 0 *tile-size* *tile-size*)
+                       :description "Player"))
   (setf (gethash :monster *creatures*)
         (make-instance 'creature
                        :x 5 :y 5 :hp 10
-                       :rect (sdl2:make-rect 0 17 *tile-size* *tile-size*))))
+                       :rect (sdl2:make-rect 0 17 *tile-size* *tile-size*)
+                       :description "Monster")))
 
 ; === SDL2 ===
 
@@ -186,12 +182,45 @@
 
 ; === Game logic ===
 
+(defun camera-on-player ()
+  (with-slots (x y) (gethash :player *creatures*)
+    (setf (slot-value *camera* 'x) x)
+    (setf (slot-value *camera* 'y) y)))
+
 (defun set-game-mode (mode)
   (setf *mode* mode)
   (case mode
     (:normal
       (camera-on-player))
     (:examine)))
+
+(defun get-map-tile (x y)
+  (gethash (list x y) *map*))
+
+(defun move-creature-p (creature d-x d-y)
+  (with-slots (x y) creature
+    (if (slot-value (get-map-tile (+ x d-x) (+ y d-y)) 'passable)
+        t
+        (progn
+          (push (format nil "Can't go ~a ~a" d-x d-y) *messages*)
+          nil))))
+
+(defun move-creature (creature d-x d-y)
+  (when (move-creature-p creature d-x d-y)
+    (with-slots (x y) creature
+      (incf x d-x)
+      (incf y d-y))))
+
+(defun inside-interval (value from to)
+  (and (>= value from )
+       (<= value to)))
+
+(defun move-camera (d-x d-y)
+  (with-slots (x y) *camera*
+    (when (and (inside-interval (+ x d-x) 0 *map-width*)
+               (inside-interval (+ y d-y) 0 *map-height*))
+      (incf x d-x)
+      (incf y d-y))))
 
 (defun handle-keypresses (key)
   (case *mode*
@@ -213,43 +242,6 @@
         (:scancode-j (move-camera 0 1))
         (:scancode-k (move-camera 0 -1))
         (:scancode-l (move-camera 1 0))))))
-
-(defun push-message (message)
-  (setf *messages*
-        (cons message *messages*)))
-
-(defun camera-on-player ()
-  (with-slots (x y) (gethash :player *creatures*)
-    (setf (slot-value *camera* 'x) x)
-    (setf (slot-value *camera* 'y) y)))
-
-(defun get-map-tile (x y)
-  (gethash (list x y) *map*))
-
-(defun move-creature-p (creature d-x d-y)
-  (with-slots (x y) creature
-    (if (slot-value (get-map-tile (+ x d-x) (+ y d-y)) 'passable)
-        t
-        (progn
-          (push-message (format nil "Can't go ~a ~a" d-x d-y))
-          nil))))
-
-(defun move-creature (creature d-x d-y)
-  (when (move-creature-p creature d-x d-y)
-    (with-slots (x y) creature
-      (incf x d-x)
-      (incf y d-y))))
-
-(defun inside-interval (value from to)
-  (and (>= value from )
-       (<= value to)))
-
-(defun move-camera (d-x d-y)
-  (with-slots (x y) *camera*
-    (when (and (inside-interval (+ x d-x) 0 *map-width*)
-               (inside-interval (+ y d-y) 0 *map-height*))
-      (incf x d-x)
-      (incf y d-y))))
 
 ; === Rendering ===
 
@@ -323,12 +315,25 @@
                  (format nil "Camera y ~a" y)
                  5 (+ 5 (* 9 7)))))
 
-(defun render-last-messages (font-texture)
-  (loop for message in *messages*
+(defun render-messages (font-texture &optional (messages *messages*))
+  (loop for message in messages
         for i from 0 to 13
         do (render-text font-texture
                         message
                         5 (+ (* i 9) 2))))
+
+(defun render-examine-messages (font-texture)
+  (setf *examine-messages* nil)
+  (with-slots (x y) *camera*
+    (push (slot-value (get-map-tile x y) 'description)
+          *examine-messages*)
+    (maphash (lambda (k creature)
+               (declare (ignore k))
+               (when (and (= x (slot-value creature 'x))
+                          (= y (slot-value creature 'y)))
+                 (push (slot-value creature 'description) *examine-messages*)))
+             *creatures*))
+  (render-messages font-texture *examine-messages*))
 
 ; === Main game loop ===
 
@@ -364,7 +369,9 @@
            (with-viewport (renderer *menu-viewport*)
              (render-info font-texture))
            (with-viewport (renderer *message-viewport*)
-             (render-last-messages font-texture))
+             (case *mode*
+               (:normal (render-messages font-texture))
+               (:examine (render-examine-messages font-texture))))
            (sdl2:render-present renderer)
            (setf *redraw* nil))
          (sdl2:delay 50))))))
