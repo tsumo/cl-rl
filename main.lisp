@@ -38,6 +38,7 @@
 (defparameter *map-height* 0)
 (defparameter *font* (make-hash-table))
 (defparameter *creatures* nil)
+(defparameter *camera* nil)
 (defparameter *redraw* t)
 (defparameter *messages* nil)
 
@@ -68,10 +69,13 @@
      :initarg :rect
      :initform nil)))
 
-(defclass creature ()
+(defclass entity ()
   ((x :initarg :x :initform 0)
-   (y :initarg :y :initform 0)
-   (hp :initarg :hp :initform 0)))
+   (y :initarg :y :initform 0)))
+
+(defclass creature (entity)
+  ((hp :initarg :hp :initform 0)
+   (rect :initarg :rect :initform nil)))
 
 ; === Initialization ===
 
@@ -110,12 +114,19 @@
 
 (defun init-vars ()
   (setf *redraw* t)
-  (setf *messages* nil))
+  (setf *messages* nil)
+  (setf *camera* (make-instance 'entity :x 3 :y 3)))
 
 (defun init-creatures ()
-  (setf *creatures*
-        (list ':player (make-instance 'creature :x 3 :y 3 :hp 100)
-              ':monster (make-instance 'creature :x 5 :y 5 :hp 10))))
+  (setf *creatures* (make-hash-table))
+  (setf (gethash :player *creatures*)
+        (make-instance 'creature
+                       :x 3 :y 3 :hp 100
+                       :rect (sdl2:make-rect 34 0 *tile-size* *tile-size*)))
+  (setf (gethash :monster *creatures*)
+        (make-instance 'creature
+                       :x 5 :y 5 :hp 10
+                       :rect (sdl2:make-rect 0 17 *tile-size* *tile-size*))))
 
 ; === SDL2 ===
 
@@ -193,12 +204,14 @@
     (with-slots (x y hp) creature
       (incf x d-x)
       (incf y d-y)
-      (decf hp))))
+      (decf hp)
+      (setf (slot-value *camera* 'x) x)
+      (setf (slot-value *camera* 'y) y))))
 
 ; === Rendering ===
 
 (defun render-map (spritesheet-texture)
-  (let ((player (getf *creatures* :player)))
+  (let ((player (gethash :player *creatures*)))
     (with-slots (x y) player
       (let ((start-x (- x (/ *main-viewport-width-in-tiles* 2)))
             (start-y (- y (/ *main-viewport-height-in-tiles* 2))))
@@ -215,23 +228,18 @@
                                       :clip (slot-value tile 'rect))))))))))
 
 (defun render-creatures (spritesheet-texture)
-  (let ((player-rect (sdl2:make-rect 34 0 *tile-size* *tile-size*))
-        (monster-rect (sdl2:make-rect 0 17 *tile-size* *tile-size*))
-        (player (getf *creatures* :player))
-        (monster (getf *creatures* :monster)))
-    (render spritesheet-texture
-            (* (/ *main-viewport-width-in-tiles* 2) *tile-size*)
-            (* (/ *main-viewport-height-in-tiles* 2) *tile-size*)
-            :clip player-rect)
-    (with-slots (x y) monster
-      (render spritesheet-texture
-              (* (+ (/ *main-viewport-width-in-tiles* 2)
-                    (- x (slot-value player 'x)))
-                 *tile-size*)
-              (* (+ (/ *main-viewport-height-in-tiles* 2)
-                    (- y (slot-value player 'y)))
-                 *tile-size*)
-              :clip monster-rect))))
+  (maphash (lambda (k creature)
+             (declare (ignore k))
+             (with-slots (x y rect) creature
+               (render spritesheet-texture
+                       (* (+ (/ *main-viewport-width-in-tiles* 2)
+                             (- x (slot-value *camera* 'x)))
+                          *tile-size*)
+                       (* (+ (/ *main-viewport-height-in-tiles* 2)
+                             (- y (slot-value *camera* 'y)))
+                          *tile-size*)
+                       :clip rect)))
+           *creatures*))
 
 (defun render-text (font-texture text x y)
   (loop for char across text
@@ -243,17 +251,26 @@
 (defun render-player-info (font-texture player)
   (with-slots (x y hp) player
     (render-text font-texture
+                 (concatenate 'string "Player hp "
+                              (princ-to-string hp))
+                 5 5)
+    (render-text font-texture
                  (concatenate 'string "Player x "
                               (princ-to-string x))
-                 5 5)
+                 5 14)
     (render-text font-texture
                  (concatenate 'string "Player y "
                               (princ-to-string y))
-                 5 14)
+                 5 23))
+  (with-slots (x y) *camera*
     (render-text font-texture
-                 (concatenate 'string "Player hp "
-                              (princ-to-string hp))
-                 5 23)))
+                 (concatenate 'string "Camera x "
+                              (princ-to-string x))
+                 5 32)
+    (render-text font-texture
+                 (concatenate 'string "Camera y "
+                              (princ-to-string y))
+                 5 41)))
 
 (defun render-last-messages (font-texture)
   (loop for message in *messages*
@@ -280,7 +297,7 @@
            (font-texture (load-texture-from-file
                            renderer
                            "font.png"))
-           (player (getf *creatures* :player)))
+           (player (gethash :player *creatures*)))
       (sdl2:with-event-loop (:method :poll)
         (:quit () t)
         (:keydown (:keysym keysym)
