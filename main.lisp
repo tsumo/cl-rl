@@ -111,7 +111,7 @@
                                                     :passable t
                                                     :rect floor-rect))))
                      finally (setf *map-width* x))
-            finally (setf *map-height* y)))))
+            finally (setf *map-height* (1- y))))))
 
 (defun init-vars ()
   (setf *redraw* t)
@@ -209,10 +209,10 @@
       (case key
         (:scancode-q (sdl2:push-quit-event))
         (:scancode-escape (set-game-mode :normal))
-        (:scancode-h (move-creature *camera* -1 0))
-        (:scancode-j (move-creature *camera* 0 1))
-        (:scancode-k (move-creature *camera* 0 -1))
-        (:scancode-l (move-creature *camera* 1 0))))))
+        (:scancode-h (move-camera -1 0))
+        (:scancode-j (move-camera 0 1))
+        (:scancode-k (move-camera 0 -1))
+        (:scancode-l (move-camera 1 0))))))
 
 (defun push-message (message)
   (setf *messages*
@@ -240,13 +240,24 @@
       (incf x d-x)
       (incf y d-y))))
 
+(defun inside-interval (value from to)
+  (and (>= value from )
+       (<= value to)))
+
+(defun move-camera (d-x d-y)
+  (with-slots (x y) *camera*
+    (when (and (inside-interval (+ x d-x) 0 *map-width*)
+               (inside-interval (+ y d-y) 0 *map-height*))
+      (incf x d-x)
+      (incf y d-y))))
+
 ; === Rendering ===
 
 (defun render-map (spritesheet-texture)
   (with-slots (x y) *camera*
     (let ((start-x (- x (/ *main-viewport-width-in-tiles* 2)))
           (start-y (- y (/ *main-viewport-height-in-tiles* 2))))
-      (loop for world-y from start-y to (1- *map-height*)
+      (loop for world-y from start-y to *map-height*
             and screen-y from 0 to *main-viewport-height-in-tiles*
             do (loop for world-x from start-x to *map-width*
                      and screen-x from 0 to *main-viewport-width-in-tiles*
@@ -288,23 +299,29 @@
 
 (defun render-info (font-texture)
   (render-text font-texture (princ-to-string *mode*) 5 5)
+  (render-text font-texture
+               (format nil "Map width ~a" *map-width*)
+               5 (+ 5 9))
+  (render-text font-texture
+               (format nil "Map height ~a" *map-height*)
+               5 (+ 5 (* 9 2)))
   (with-slots (x y hp) (gethash :player *creatures*)
     (render-text font-texture
                  (format nil "Player hp ~a" hp)
-                 5 14)
+                 5 (+ 5 (* 9 3)))
     (render-text font-texture
                  (format nil "Player x ~a" x)
-                 5 23)
+                 5 (+ 5 (* 9 4)))
     (render-text font-texture
                  (format nil "Player y ~a" y)
-                 5 32))
+                 5 (+ 5 (* 9 5))))
   (with-slots (x y) *camera*
     (render-text font-texture
                  (format nil "Camera x ~a" x)
-                 5 41)
+                 5 (+ 5 (* 9 6)))
     (render-text font-texture
                  (format nil "Camera y ~a" y)
-                 5 50)))
+                 5 (+ 5 (* 9 7)))))
 
 (defun render-last-messages (font-texture)
   (loop for message in *messages*
