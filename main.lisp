@@ -1,11 +1,4 @@
-(defpackage #:rl
-  (:use :common-lisp)
-  (:export :main))
-
-(in-package :rl)
-
-(require :sdl2)
-(require :sdl2-image)
+(in-package #:cl-rl)
 
 ; === Globals ===
 
@@ -349,10 +342,10 @@
       renderer 0 0 0 0)
     (let* ((spritesheet-texture (load-texture-from-file
                               renderer
-                              "spritesheet.png"))
+                              "img/spritesheet.png"))
            (font-texture (load-texture-from-file
                            renderer
-                           "font.png")))
+                           "img/font.png")))
       (sdl2:with-event-loop (:method :poll)
         (:quit () t)
         (:keydown (:keysym keysym)
